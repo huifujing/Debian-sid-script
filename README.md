@@ -1,2 +1,3 @@
 # Debian-sid-script
-This is a script that allows you to flash Debian Sid using `dd`.
+
+bash <(wget -qO- 'https://raw.githubusercontent.com/huifujing/Debian-sid-script/main/dd.sh')
