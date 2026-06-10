@@ -24,7 +24,7 @@ download() {
     fi
 }
 
-# 修复1：纯 shell 实现 ipcalc -m（CIDR -> 点分十进制掩码）
+# 纯 shell 实现 ipcalc -m（CIDR -> 点分十进制掩码）
 cidr_to_netmask() {
     cidr="${1#*/}"
     mask=0
@@ -42,7 +42,7 @@ cidr_to_netmask() {
 
 set_security_archive() {
     case $suite in
-        sid|unstable)
+        sid|unstable|trixie|testing)
             security_archive=''
             ;;
         *)
@@ -51,8 +51,9 @@ set_security_archive() {
 }
 
 set_daily_d_i() {
+    # 不再依赖此函数决定下载地址，仅为兼容保留
     case $suite in
-        sid|unstable)
+        sid|unstable|trixie|testing)
             daily_d_i=true
             ;;
         *)
@@ -66,14 +67,14 @@ set_suite() {
     set_security_archive
 }
 
-# 修复2：去掉冗余的 interface=auto，直接探测
+# ── 基础配置 ──────────────────────────────
 interface=$(ip route | awk '/default/ {print $5; exit}')
 ip=$(ip -4 addr show "$interface" | awk '/inet / {print $2; exit}')
 gateway=$(ip route | awk '/default/ {print $3; exit}')
 dns='1.1.1.1'
 ntp=time.cloudflare.com
 ssh_port=122
-set_suite sid
+set_suite trixie                      # ★ Debian 13
 mirror_protocol=http
 mirror_host=deb.debian.org
 mirror_directory=/debian
@@ -81,21 +82,16 @@ mirror_proxy=
 password_hash='$5$bvf6qpkFZ7KLOFrr$ztpdLRhznACEkZxaiBZvNY1QbDnOtWRqO5egLeTmnE8'
 timezone=UTC
 
-# 修复5：更健壮的 disk 检测，兼容 NVMe / mdraid / LVM / 部分 KVM
-#   优先用 /proc/mounts 找到 / 所在块设备，再追溯到整盘
+# 健壮的磁盘检测（NVMe / LVM / mdraid）
 detect_disk() {
-    # 找到挂载 / 的设备节点
     root_dev=$(awk '$2 == "/" {print $1}' /proc/mounts | tail -n1)
 
-    # 若是 LVM/dm 设备，找其底层物理磁盘
     if echo "$root_dev" | grep -q '^/dev/dm-'; then
         dm_name=$(basename "$root_dev")
-        # 通过 slaves 找底层设备
         slave=$(ls "/sys/block/$dm_name/slaves/" 2>/dev/null | head -n1)
         [ -n "$slave" ] && root_dev="/dev/$slave"
     fi
 
-    # 若是 md (软 RAID)，同样向下追溯
     if echo "$root_dev" | grep -q '^/dev/md'; then
         md_name=$(basename "$root_dev")
         slave=$(ls "/sys/block/$md_name/slaves/" 2>/dev/null | head -n1)
@@ -104,21 +100,15 @@ detect_disk() {
 
     dev_name=$(basename "$root_dev")
 
-    # 去掉分区后缀：
-    #   sda1   -> sda
-    #   nvme0n1p1 -> nvme0n1   (NVMe 分区以 p+数字结尾)
-    #   vda1   -> vda
     if echo "$dev_name" | grep -qE 'nvme[0-9]+n[0-9]+p[0-9]+'; then
         disk_name=$(echo "$dev_name" | sed 's/p[0-9]*$//')
     else
         disk_name=$(echo "$dev_name" | sed 's/[0-9]*$//')
     fi
 
-    # 验证确实是块设备整盘
     if [ -b "/dev/$disk_name" ]; then
         echo "/dev/$disk_name"
     else
-        # 降级：取第一块非 loop/dm/md 磁盘
         lsblk -dpno NAME | grep -vE 'loop|dm-|md' | head -n1
     fi
 }
@@ -156,7 +146,7 @@ apt_src=true
 
 non_free_firmware_available=false
 case $suite in
-    sid|unstable)
+    sid|unstable|trixie|testing)
         non_free_firmware_available=true
         ;;
 esac
@@ -179,6 +169,7 @@ save_preseed='cat'
     save_preseed='tee -a preseed.cfg'
 }
 
+# ── 生成 preseed.cfg ─────────────────────
 $save_preseed << EOF
 # Localization
 
@@ -220,7 +211,7 @@ d-i mirror/$mirror_protocol/hostname string $mirror_host
 d-i mirror/$mirror_protocol/directory string $mirror_directory
 d-i mirror/$mirror_protocol/proxy string $mirror_proxy
 d-i mirror/suite string $suite
-d-i mirror/udeb/suite string $suite
+d-i mirror/udeb/suite string stable
 
 # Account setup
 
@@ -367,15 +358,14 @@ $save_preseed << 'EOF'
 d-i finish-install/reboot_in_progress note
 EOF
 
-# 修复4：用 $ssh_port 变量替换原先硬编码的 122
 late_command="in-target sh -c \"sed -i 's/^#\\?Port .*/Port $ssh_port/' /etc/ssh/sshd_config; sed -i 's/^#\\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config\""
 echo "d-i preseed/late_command string $late_command" | $save_preseed
 
-# ── GRUB ──────────────────────────────────────────────────────────────────────
-
+# ── 下载安装程序（固定使用 stable 版） ──
 save_grub_cfg='cat'
 [ "$dry_run" = false ] && {
-    base_url="https://d-i.debian.org/daily-images/$architecture/daily/netboot/debian-installer/$architecture"
+    # ★ 核心修复：无论目标是什么版本，始终用 stable 安装程序引导
+    base_url="http://deb.debian.org/debian/dists/stable/main/installer-${architecture}/current/images/netboot/debian-installer/${architecture}"
 
     download "$base_url/linux" linux
     download "$base_url/initrd.gz" initrd.gz
