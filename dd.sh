@@ -74,7 +74,7 @@ gateway=$(ip route | awk '/default/ {print $3; exit}')
 dns='1.1.1.1'
 ntp=time.cloudflare.com
 ssh_port=122
-set_suite trixie                      # ★ Debian 13
+set_suite sid                         # ★ Debian sid
 mirror_protocol=http
 mirror_host=deb.debian.org
 mirror_directory=/debian
