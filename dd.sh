@@ -328,7 +328,7 @@ $save_preseed << 'EOF'
 tasksel tasksel/first multiselect ssh-server
 EOF
 
-install="$install ca-certificates libpam-systemd"
+install="$install ca-certificates libpam-systemd wget curl screen cron zip unzip tar vnstat nftables dnsutils sudo"
 
 [ -n "$install" ] && echo "d-i pkgsel/include string $install" | $save_preseed
 [ -n "$upgrade" ]  && echo "d-i pkgsel/upgrade select $upgrade"  | $save_preseed
